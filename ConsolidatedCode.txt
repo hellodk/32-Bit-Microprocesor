@@ -1,0 +1,817 @@
+----------------------------------------------------------------------------------
+-- Company: 	SRM University
+-- Engineer: 	Deepak Kumar Gupta
+--		Anand Kumar Singh	
+-- 		Gautam Kr. Sinha
+--		Anindita Panda
+-- Create Date:    22:22:33 04/05/2011 
+-- Design Name: 32- Bit Microprocessor
+-- Module Name: CPU    
+-- Project Name	 32-Bit Microprocessor
+-- Target Device: Spartan 3E
+-- Tool versions: Xilinx 9.1
+--		Modelsim SE 5.7f
+-- Description: 
+--
+-- Dependencies: 
+--
+-- Revision: 
+-- Revision 0.01 - File Created
+-- Additional Comments: 
+--
+----------------------------------------------------------------------------------
+--Cpu library
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_ARITH.ALL;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;	
+--  Uncomment the following lines to use the declarations that are
+--  provided for instantiating Xilinx primitive components.
+--library UNISIM;
+--use UNISIM.VComponents.all;
+package cpu_lib is
+type t_shift is (shftpass,shl,shr,rotl,rotr);
+subtype t_alu is unsigned(4 downto 0);
+constant alupass : unsigned(4 downto 0) := "00000";
+constant andop : unsigned (4 downto 0) := "00001";
+constant orop : unsigned (4 downto 0) := "00010";
+constant notop : unsigned(4 downto 0) := "00011";
+constant xorop : unsigned (4 downto 0) := "00100";
+constant plus : unsigned (4 downto 0) := "00101";
+constant alusub : unsigned (4 downto 0) := "00110";
+constant inc : unsigned (4 downto 0) := "00111";
+constant dec : unsigned (4 downto 0) := "01000";
+constant zero : unsigned (4 downto 0) := "01001";
+type t_comp is (eq , neq, gt, gte, lt,lte );
+subtype t_reg is std_logic_vector (4 downto 0);
+type state is (reset1, reset2,reset3,reset4,reset5,reset6,execute,nop,load,store,move,
+load2,load3,load4,store2,store3,store4,move2,move3,move4,incpc,incpc2,incpc3,incpc4,
+incpc5,incpc6,loadpc,loadpc2,loadpc3,loadpc4,bgti2,bgti3,bgti4,bgti5,bgti6,bgti7,bgti8,
+bgti9,bgti10,braii2,brai3,brai4,brai5,brai6,loadi2,loadi3,loadi4,loadi5,loadi6,inc2,inc3,
+inc4);
+subtype bit32 is std_logic_vector(31 downto 0);
+end cpu_lib;
+--Alu
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.std_logic_unsigned.all;
+use work.cpu_lib.all;
+entity alu is
+    port (
+        a: in bit32;
+        b: in bit32;
+        sel: in t_alu;
+        c: out bit32;
+		  reset: in bit
+    );
+end alu;
+architecture behavioral of alu is
+begin
+ aluproc:process(a,b,sel)
+ begin
+ case sel is
+ when alupass =>
+ c<=a after 1 ns;
+when andop=>
+ c<=a and b after 1 ns; 
+when orop=>
+ c<=a or b after 1 ns; 
+ when xorop=>
+ c<=a xor b after 1 ns;
+ when notop=>
+ c<= not a after 1 ns; 
+ when plus=>
+ c<= a + b after 1 ns;
+ when alusub =>
+ c<= a - b after 1 ns;
+ when inc =>
+ c <= a + "00000000000000000000000000000001";
+ when dec =>
+ c <= a - "00000000000000000000000000000001";
+  when zero=>
+ c<="00000000000000000000000000000000";
+  when others=>
+ c<="00000000000000000000000000000000"; 
+ end case; 
+ end process; -- <<enter your statements here>>
+end behavioral;
+--Comprator
+library IEEE ;
+use IEEE.std_logic_1164.all;
+use work.cpu_lib.all;
+entity comp is
+port(a,b:in bit32;
+        sel:in t_comp;
+        compout:out std_logic);
+end comp;
+architecture comp of comp  is
+begin
+process(a,b,sel)
+begin
+case sel is
+when eq=>
+ if(a=b)then
+ compout<='1' after 1 ns;
+ else
+ compout<='0' after 1 ns;
+ end if;        
+ when neq=>
+ if(a/=b)then
+ compout<='1' after 1 ns;
+ else
+ compout <='0' after 1 ns;
+ end if;        
+when gt=>
+ if(a>b)then
+ compout <='1' after 1 ns;
+ else
+ compout<='0' after 1 ns;
+ end if;        
+  when gte=>
+ if(a>=b)then
+ compout <='1' after 1 ns ;
+ else
+ compout <='0' after 1 ns;
+ end if;        
+ when lt=>
+ if(a<b)then
+ compout<='1' after 1 ns;
+ else
+ compout<='0' after 1 ns;
+ end if;        
+ when lte=>
+ if(a<=b)then
+ compout<='1' after 1 ns;
+ else
+ compout<='0' after 1 ns;
+ end if;
+ end case;
+ end process;    
+ end comp;  
+--Control unit  
+library ieee;
+use ieee.std_logic_1164.all;
+use work.cpu_lib.all;
+entity control is 
+port(reset,ready,clock,compout:in std_logic;
+instrreg :in bit32;
+progcntrwr,progcntrrd,addrregwr,outregwr,outregrd:out std_logic;
+compsel: out t_comp;
+alusel:out t_alu;
+shiftsel:out t_shift;
+regsel:out t_reg;
+opregrd,opregwr,instrwr,regrd,regwr,rw,vma:out std_logic);
+end control;
+architecture control of control is 
+signal current_state , next_state :state;
+begin
+nxtstateproc:process(current_state,instrreg,compout,ready)
+begin
+progcntrwr <= '0';
+progcntrrd <= '0';
+addrregwr <= '0';
+outregwr <= '0';
+outregrd <= '0';
+shiftsel <= shftpass;
+alusel <= alupass;
+compsel <= eq;
+opregrd <= '0';
+opregwr <='0';
+instrwr <= '0';
+regsel <= "00000";
+regrd <= '0';
+regwr <= '0';
+rw <= '0';
+vma <= '0';
+case current_state is 
+when reset1=>
+alusel<=zero after 1 ns;
+shiftsel<=shftpass;
+next_state<=reset2;
+when reset2=>
+alusel <= zero;
+shiftsel <= shftpass;
+outregwr <= '1';
+next_state<=reset3;
+when reset3=>
+outregrd<='1';
+next_state<=reset4;
+when reset4=>
+outregrd <='1';
+progcntrwr<='1';
+addrregwr<= '1';
+next_state<=reset5;
+when reset5 =>
+vma <= '1';
+rw <= '0';
+next_state <= reset6;
+when reset6 =>
+vma <= '1';
+rw <= '0';
+if ready = '1' then
+instrwr <= '1';
+next_state <= execute;
+else
+next_state <= reset6;
+end if;
+when execute=>
+case instrreg(31 downto 22) is
+when "0000000000" =>    --nop
+next_state <= incpc;
+when "0000000001" =>	--load
+regsel <= instrreg(10 downto 6);
+regrd <= '1';
+next_state <= load2;
+when "0000000010" =>   --store
+regsel <= instrreg(4 downto 0);
+regrd <= '1';	
+next_state <=store2;	   
+when "0000000011" =>   --move
+regsel <= instrreg(10 downto 6);
+regrd <= '1';
+alusel <= alupass;
+shiftsel <= shftpass;
+next_state <= move2;
+when "0000000100" =>               --loadi
+progcntrrd <= '1';
+alusel <= inc;
+shiftsel <= shftpass;
+next_state <=loadi2;
+when "0000000101" =>		--branchimm
+progcntrrd <= '1';
+alusel <= inc;
+shiftsel <= shftpass;
+next_state <= braii2;
+when "0000000110"  =>
+regsel <= instrreg(10 downto 6);
+regrd <= '1';
+next_state <= bgti2;
+when "0000000111" =>
+regsel <= instrreg (4 downto 0);
+regrd <= '1';
+alusel<= inc;
+shiftsel <=shftpass;
+next_state <= inc2; 
+when others=>
+next_state <= incpc;
+end case;
+when load2=>
+regsel<=  instrreg(10 downto 6);
+regrd<= '1';
+addrregwr<= '1';
+next_state<= load3;
+when load3=>
+vma <= '1';
+rw <= '0';
+next_state<= load4;
+when load4=>
+vma <= '1';
+rw <= '0';
+regsel <= instrreg(4 downto 0);
+regwr <= '1';
+next_state <=incpc;
+when store2=>
+regsel <= instrreg (4 downto 0);
+regrd <= '1';
+addrregwr <= '1';
+next_state <= store3;
+when store3=>
+regsel <= instrreg(10 downto 6);
+regrd <= '1';
+next_state <= store4;
+when store4 =>
+regsel <= instrreg(10 downto 6);
+regrd<='1';
+vma <='1';
+rw <= '1';
+next_state <= incpc;
+when move2 =>
+regsel<= instrreg(10 downto 6);
+regrd<= '1';
+alusel<=alupass;
+shiftsel<=shftpass;
+outregwr <= '1';
+next_state <= move3;
+when move3 =>
+outregrd <= '1';
+next_state <= move4;
+when move4=>
+outregrd <= '1';
+regsel <= instrreg(4 downto 0);
+regwr <= '1';
+next_state <= incpc;
+when loadi2 =>
+progcntrrd <= '1';
+alusel <= inc;
+shiftsel <= shftpass;
+outregwr <= '1';
+next_state <= loadi3;
+when loadi3 =>
+outregrd<= '1';
+next_state <= loadi4;
+when loadi4 =>
+outregrd <= '1';
+progcntrwr <='1';
+addrregwr <= '1';
+next_state<= loadi5;
+when loadi5 =>
+vma <= '1';
+rw <= '0';
+next_state <= loadi6;
+when loadi6=>
+vma <= '1';
+rw <= '0';
+  if(ready='1') then
+regsel<= instrreg(4 downto 0);
+regwr<= '1';
+next_state<= incpc;
+else
+next_state<= loadi6;
+end if ;
+when braii2 =>
+progcntrrd <= '1';
+alusel<= inc;
+shiftsel<= shftpass;
+outregwr<= '1';
+next_state<= brai3;
+when brai3=>
+outregrd<= '1';
+next_state<= brai4;
+when brai4=>
+outregrd<= '1';
+progcntrwr <= '1';
+addrregwr <= '1';
+next_state<= brai5;
+when brai5=>
+vma <= '1';
+rw <= '0';
+next_state <= brai6;
+when brai6 =>
+vma <= '1';
+rw <= '0';
+if(ready='1')then
+progcntrwr<='1';
+next_state<= loadpc;
+else
+next_state<= brai6;
+end if;
+when bgti2=>
+regsel<= instrreg(10 downto 6);
+regrd<= '1';
+opregwr <= '1';
+next_state<= bgti3;
+when bgti3 =>
+opregrd <= '1';
+regsel <= instrreg (4 downto 0);
+regrd <= '1' ;
+compsel <= gt;
+next_state <= bgti4;
+when bgti4 =>
+opregrd <= '1' after 1 ns;
+regsel <= instrreg (4 downto 0);
+regrd <= '1';
+compsel <= gt;
+if compout = '1' then
+next_state <= bgti5;
+else
+next_state <= incpc;
+end if;
+when bgti5 =>
+progcntrrd <= '1';
+alusel <= inc;
+shiftsel <= shftpass;
+next_state <= bgti6;
+when bgti6 =>
+progcntrrd <= '1';
+alusel <= inc;
+shiftsel <= shftpass;
+outregwr <= '1';
+next_state <= bgti7;
+when bgti7 =>
+outregrd <= '1';
+next_state <= bgti8;
+when bgti8 =>
+outregrd <= '1';
+progcntrwr <= '1';
+addrregwr <= '1' ;
+next_state <= bgti9;
+when bgti9=>
+vma <= '1';
+rw <= '0';
+next_state <= bgti10;
+when bgti10 =>
+vma <= '1';
+rw <= '0';
+if ready = '1' then 
+progcntrwr <= '1';
+next_state <= loadpc;
+else 
+next_state <= bgti10;
+end if;
+when inc2 =>
+regsel <= instrreg (4 downto 0);
+regrd <= '1';
+alusel <= inc ;
+shiftsel<= shftpass;
+outregwr <= '1';
+next_state <= inc3;
+when inc3 =>
+outregrd <='1';
+next_state <= inc4;
+when inc4 =>
+outregrd <= '1';
+regsel <= instrreg(4 downto 0);
+regwr <= '1';
+next_state <= incpc;
+when loadpc =>
+progcntrrd <= '1' ;
+next_state <= loadpc2;
+when loadpc2 =>
+progcntrrd <= '1' ;
+addrregwr <= '1';
+next_state <= loadpc3;
+when loadpc3 =>
+vma <= '1';
+rw <= '0';
+next_state <= loadpc4;
+when loadpc4 =>
+ vma <= '1';
+rw <= '0';
+if (ready ='1') then 
+instrwr <= '1';
+next_state <= execute ;
+else
+next_state <= loadpc4;
+end if;
+when incpc =>
+progcntrrd <= '1';
+alusel <= inc;
+shiftsel <= shftpass;
+next_state <= incpc2;
+when incpc2 =>
+progcntrrd <= '1';
+alusel <= inc;
+shiftsel <= shftpass;
+outregwr <= '1';
+next_state <= incpc3;
+when incpc3 =>
+outregrd <= '1';
+next_state <= incpc4;
+when incpc4 =>
+outregrd <= '1';
+progcntrwr <= '1';
+addrregwr <= '1';
+next_state <= incpc5;
+when incpc5 =>
+vma <= '1';
+rw <= '0';
+if (ready = '1') then
+instrwr <= '1';
+next_state <= execute;
+else 
+next_state <= incpc6;
+end if;
+when others =>
+next_state <=incpc;
+end case;
+end process;
+controlffroc: process(clock,reset)
+begin
+if (reset ='1') then
+current_state <= reset1 after 1 ns;
+elsif clock'event and clock = '1' then
+current_state <= next_state  after 1 ns;
+end if;
+end process;
+end control;
+--Register
+library IEEE;
+use IEEE.std_logic_1164.all;
+use work.cpu_lib.all;
+entity reg is
+    port (
+        a: in bit32;
+        clk: in std_logic;
+        q: out bit32    );
+end reg;
+architecture behavioral of reg is
+begin
+regproc:process 
+begin
+wait until clk'event and clk = '1';
+q<= a after 1 ns ;
+end process;
+end behavioral;
+--Register array
+library IEEE;
+use IEEE.std_logic_1164.all;
+use  ieee.std_logic_unsigned.all; 
+use work.cpu_lib.all;
+entity regarray is
+    port (data : in bit32;
+sel: in t_reg;
+en: in std_logic;
+clk: in std_logic;
+q:out bit32);
+end regarray;
+architecture behavioral of regarray is
+type t_ram is array (0 to 15) of bit32;
+signal temp_data: bit32 ;
+begin
+process (clk,sel)
+variable ramdata : t_ram;
+begin
+if clk'event and clk = '1' then
+ramdata(conv_integer(sel)):=data;
+end if;
+temp_data <= ramdata(conv_integer(sel)) after 1 ns;
+end process;
+process(en,temp_data)
+begin
+if en = '1' then
+q<= temp_data after 1 ns;
+else
+q <= "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" after 1 ns;
+end if;
+end process;
+end behavioral;
+--Shift Unit
+library IEEE;
+use work.cpu_lib.all;
+use IEEE.std_logic_1164.all;
+entity shift is
+port(a:in bit32;
+        sel:in t_shift;
+        y:out bit32);
+end shift;
+architecture behavioral of shift is
+begin
+shiftproc:process(a,sel)
+begin
+case sel is
+when shftpass=>
+y<=a after 1 ns;
+when shl=>
+y<= a(30 downto 0) & '0' after 1 ns;
+when shr=>
+y<= '0' & a(31 downto 1) after 1 ns;
+when rotl=>
+y<= a(30 downto 0) & a(31) after 1 ns;
+when rotr=>
+y<= a(0) & a(31 downto 1) after 1 ns;
+end case;
+end process;
+end behavioral;
+--Triregister
+library IEEE;
+use IEEE.std_logic_1164.all;
+use work.cpu_lib.all;
+entity trireg is
+    port (
+        a: in bit32;
+        en: in STD_LOGIC;
+       clk: in STD_LOGIC;
+        q: out bit32    );
+end trireg;
+architecture behavioral of trireg is
+signal val: bit32;
+begin
+ triregdata:process
+ begin
+ wait until clk'event and clk = '1' ;
+ val<=a;
+ end process;
+ trireg3st:process(en,val)
+ begin
+ if en= '1' then 
+ q<= val after 1 ns;
+ elsif en = '0' then
+ q <= "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" after 1 ns;
+ else
+ q <= "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" after 1 ns;
+ end if;
+ end process;
+ end behavioral;
+--Cpu
+entity cpu is
+    port (
+        vma: out STD_LOGIC;
+        rw: out STD_LOGIC;
+        clock: in STD_LOGIC;
+        reset: in STD_LOGIC;
+        ready: in STD_LOGIC;
+        addr: out bit32;
+        data: inout bit32);
+end cpu;
+architecture behavioral of cpu is
+component reg 
+port(a: in bit32;
+clk: in std_logic;
+q:out bit32);
+end component;
+component trireg 
+port( a: in bit32;
+en,clk:in std_logic;
+q: out bit32);
+end component;
+component control is
+port(clock:in std_logic;
+reset:in std_logic;
+instrreg:in bit32;
+compout:in std_logic;
+ready:in std_logic;
+progcntrwr: out std_logic; 
+progcntrrd: out std_logic;
+addrregwr: out std_logic; 
+outregwr: out std_logic;
+outregrd: out std_logic;
+shiftsel:out t_shift;
+alusel:out t_alu;
+compsel:out t_comp;
+opregrd: out std_logic;
+opregwr:out std_logic;
+instrwr:out std_logic;
+regsel:out t_reg;
+regrd:out std_logic;
+regwr:out std_logic;
+rw:out std_logic;
+vma:out std_logic);
+end component;
+component alu 
+port( a,b:in bit32;
+sel:in t_alu;
+c:out bit32);
+end component;
+component shift is
+port(a: in bit32;
+sel :in t_shift;
+y:out bit32);
+end component;
+component comp 
+port(a,b: in bit32;
+sel:in t_comp;
+compout:out std_logic);
+end component;
+component regarray 
+port(data : in bit32;
+sel: in t_reg;
+en: in std_logic;
+clk: in std_logic;
+q:out bit32);
+end component;
+signal regrd,regwr,opregrd,opregwr,outregrd,outregwr,addrregwr,instrregwr,progcntrrd,progcntrwr,compout:std_logic ;
+signal opdata,aluout,shiftout,instrregout:bit32;
+signal shiftsel:t_shift;
+signal alusel:t_alu;
+signal regsel :t_reg;
+signal compsel:t_comp;
+begin
+ra1: regarray
+port map(data,regsel,regrd,regwr,data);
+opreg: trireg  --  pc
+port map(data,opregrd,opregwr,opdata);
+u4:trireg   -- outreg
+port map(shiftout,outregrd,outregwr,data);
+alu1: alu
+port map(data,opdata,alusel,aluout);
+shift1:shift
+port map(aluout,shiftsel,shiftout);
+outreg:trireg   -- outreg
+port map(shiftout,outregrd,outregwr,data);
+addrreg:reg  -- addreg
+port map(data,addrregwr,addr);
+progcntr: trireg 
+port map (data, progcntrrd,progcntrwr,data);
+comp1:comp
+port map(opdata,data,compsel,compout);
+instr:reg  --  instr reg
+port map(data,instrregwr,instrregout);
+con1:control 
+port map(clock,reset,instrregout,compout,ready,
+progcntrwr,progcntrrd,addrregwr,outregwr,outregrd,shiftsel,alusel,compsel,opregrd,opregwr,instrregwr,regsel,regrd,regwr,rw,vma);
+end behavioral;
+--Memory
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_ARITH.ALL;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;
+use work.cpu_lib.all;
+entity mem is
+port(addr:in bit32;
+sel,rw:in std_logic;
+ready:out std_logic;
+data:inout bit32);
+end mem;
+architecture Behavioral of mem is
+begin
+memproc:process(addr,sel,rw)
+type t_mem is array(0 to 63) of bit32;
+variable mem_data:t_mem:=("00000000000000000010000000000001",--- 0 loadi 1,# --load source 
+"00000000000000000000000000010000",---1  10
+"00000000000000000010000000000010",---2 loadi 2, # --load 
+"00000000000000000000000000110000",---3 30
+"00000000000000000010000000000110" ,---4 loadi 6, # --load end
+"00000000000000000000000000101111",---5  2F				
+"00000000000000000000100000001011",---6 load 1,3--load reg3
+"00000000000000000001000000011010",---7 store 3,2 --store reg3
+"00000000000000000011000000001110",---8 bgti 1,6,#---compare to
+"00000000000000000000000000000000",---9 00 --if so just
+"00000000000000000011100000000001",---A inc 1  --move source
+"00000000000000000011100000000010",--B inc 2  --move 
+"00000000000000000010100000001111",---C brai #  --go to the
+"00000000000000000000000000000110",--D  06
+"00000000000000000000000000000000",--E
+"00000000000000000000000000000000",--F
+"00000000000000000000000000000001",--10  --- start of source
+"00000000000000000000000000000010",--11
+"00000000000000000000000000000011",--12
+"00000000000000000000000000000100",--13
+"00000000000000000000000000000101",--14
+"00000000000000000000000000000110",--15
+"00000000000000000000000000000111",--16
+"00000000000000000000000000001000",--17
+"00000000000000000000000000001001",--18
+"00000000000000000000000000001010",--19
+"00000000000000000000000000001011",--1A
+"00000000000000000000000000001100",--1B
+"00000000000000000000000000001101",--1C
+"00000000000000000000000000001110",--1D
+"00000000000000000000000000001111",--1E
+"00000000000000000000000000010000",--1F
+"00000000000000000000000000000000",--20
+"00000000000000000000000000000000",--21
+"00000000000000000000000000000000",--22
+"00000000000000000000000000000000",--23
+"00000000000000000000000000000000",--24
+"00000000000000000000000000000000",--25
+"00000000000000000000000000000000",--26
+"00000000000000000000000000000000",--27
+"00000000000000000000000000000000",--28
+"00000000000000000000000000000000",--29
+"00000000000000000000000000000000",--2A
+"00000000000000000000000000000000",--2B
+"00000000000000000000000000000000",--2C
+"00000000000000000000000000000000",--2D
+"00000000000000000000000000000000",--2E
+"00000000000000000000000000000000",--2F
+"00000000000000000000000000000000",--30            ---start of destination 
+"00000000000000000000000000000000",--31
+"00000000000000000000000000000000",--32
+"00000000000000000000000000000000",--33
+"00000000000000000000000000000000",--34
+"00000000000000000000000000000000",--35
+"00000000000000000000000000000000",--36
+"00000000000000000000000000000000",--37
+"00000000000000000000000000000000",--38
+"00000000000000000000000000000000",--39
+"00000000000000000000000000000000",--3A
+"00000000000000000000000000000000",--3B
+"00000000000000000000000000000000",--3C
+"00000000000000000000000000000000",--3D
+"00000000000000000000000000000000",--3E
+"00000000000000000000000000000000");--3F
+begin
+data <= "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ";
+ready <= '0';
+if sel = '1' then 
+if rw = '0' then
+data <= mem_data(conv_integer(addr(31 downto 0)))	after 1 ns;
+ready<= '1';
+elsif rw = '1' then
+mem_data(conv_integer(addr(15 downto 0))) := data;
+end if;
+else 
+data <= "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" after 1 ns;
+end if;
+end process;
+end Behavioral;
+--Top level system design
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_ARITH.ALL;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;
+use work.cpu_lib.all;
+entity top is
+end top;
+architecture Behavioral of top is
+component mem
+port (addr:in bit32;
+sel,rw:in std_logic;
+ready:out std_logic;
+data :inout bit32);
+end component;
+component cpu
+port (clock,reset,ready:in std_logic;
+addr:out bit32;
+rw,vma:out std_logic;
+data:inout bit32);
+end component;
+signal addr, data: bit32;
+signal vma,rw,ready:std_logic;
+signal clock,reset:std_logic:='0';
+begin
+clock <= not clock after 50 ns;
+reset <= '1' , '0' after 100 ns;
+m1:mem port map (addr,vma,rw,ready,data);
+u1:cpu port map(clock,reset,ready,addr,rw,vma,data);
+end behavioral;
